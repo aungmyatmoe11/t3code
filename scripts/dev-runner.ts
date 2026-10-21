@@ -77,7 +77,15 @@ const MODE_ARGS = {
   ],
   "dev:server": ["run", "--filter=t3", "dev"],
   "dev:web": ["run", "--filter=@t3tools/web", "dev"],
-  "dev:desktop": ["run", "--filter=@t3tools/desktop", "--filter=@t3tools/web", "dev"],
+  "dev:desktop": [
+    "run",
+    "--filter=@t3tools/contracts",
+    "--filter=@t3tools/desktop",
+    "--filter=@t3tools/web",
+    "--filter=t3",
+    "--parallel",
+    "dev",
+  ],
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
 type DevMode = keyof typeof MODE_ARGS;
