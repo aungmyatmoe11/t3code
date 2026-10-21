@@ -36,6 +36,8 @@ export function AssistantSelectionToolbar({
   const toolbarRef = useRef<HTMLButtonElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
 
+  const citeRef = useRef<() => boolean>(() => false);
+
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current;
     if (!toolbar || !selection) return;
@@ -142,6 +144,20 @@ export function AssistantSelectionToolbar({
     });
     actionsRef.current = actions;
     const focusActions = (event: KeyboardEvent) => {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "l" &&
+        !event.isComposing &&
+        !event.defaultPrevented
+      ) {
+        if (citeRef.current()) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+      }
       const toolbar = toolbarRef.current;
       if (
         event.key !== "Tab" ||
@@ -183,6 +199,7 @@ export function AssistantSelectionToolbar({
     dismiss();
     return true;
   };
+  citeRef.current = cite;
   return createPortal(
     <Button
       ref={toolbarRef}
@@ -190,7 +207,7 @@ export function AssistantSelectionToolbar({
       size="xs"
       variant="glass"
       disabled={tooLong}
-      aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
+      aria-label={tooLong ? "Selection is too long to cite" : "Quote selection in composer (Ctrl+L)"}
       className="fixed z-50 max-w-[calc(100vw-1rem)]"
       style={{ left: selection.position.x, top: selection.position.y }}
       onPointerDown={(event) => event.preventDefault()}
@@ -204,7 +221,7 @@ export function AssistantSelectionToolbar({
       }}
     >
       <QuoteIcon aria-hidden="true" className="size-3.5" />
-      {tooLong ? "Shorten selection" : "Cite"}
+      {tooLong ? "Shorten selection" : "Quote (Ctrl+L)"}
     </Button>,
     document.body,
   );
