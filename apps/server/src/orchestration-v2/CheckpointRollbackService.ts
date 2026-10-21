@@ -235,44 +235,73 @@ export const layer: Layer.Layer<
         });
       }
 
-      const modelSelection = context.thread.modelSelection;
-      const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
-        thread: context.thread,
-        modelSelection,
-      });
-      const existingSession = context.providerSession;
-      const session = yield* sessions.open({
-        threadId: input.threadId,
-        providerSessionId: providerThread.providerSessionId,
-        modelSelection,
-        runtimePolicy: resolvedRuntimePolicy,
-        ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
-        ...(providerThread.nativeThreadRef?.nativeId == null
-          ? {}
-          : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
-        ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
-          ? {}
-          : {
-              initialProviderItemIdentityVersion: providerThread.nativeMetadata.itemIdentityVersion,
-            }),
-      });
+      let snapshot: { readonly providerThread: typeof providerThread };
+      if (providerThread.driver === "antigravity") {
+        if (runsToRollback.length === 0) {
+          snapshot = { providerThread };
+        } else {
+          if (
+            yield* Effect.try(() => sessions.isLive(providerThread.providerSessionId)).pipe(
+              Effect.flatten,
+              Effect.orElseSucceed(() => false),
+            )
+          ) {
+            yield* sessions.close(providerThread.providerSessionId);
+          }
+          snapshot = {
+            providerThread: {
+              ...providerThread,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              nativeMetadata: {
+                ...providerThread.nativeMetadata,
+                itemIdentityVersion: 2,
+              },
+              status: "idle",
+            },
+          };
+        }
+      } else {
+        const modelSelection = context.thread.modelSelection;
+        const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
+          thread: context.thread,
+          modelSelection,
+        });
+        const existingSession = context.providerSession;
+        const session = yield* sessions.open({
+          threadId: input.threadId,
+          providerSessionId: providerThread.providerSessionId,
+          modelSelection,
+          runtimePolicy: resolvedRuntimePolicy,
+          ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
+          ...(providerThread.nativeThreadRef?.nativeId == null
+            ? {}
+            : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
+          ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
+            ? {}
+            : {
+                initialProviderItemIdentityVersion:
+                  providerThread.nativeMetadata.itemIdentityVersion,
+              }),
+        });
 
-      // Rolled-back turns remain in audit history but no longer exist in the provider conversation.
-      const rolledBackAttemptIds = new Set(context.rolledBackAttemptIds);
-      const providerThreadTurns = context.providerTurns.filter(
-        (turn) =>
-          turn.providerThreadId === providerThread.id &&
-          (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
-      );
+        // Rolled-back turns remain in audit history but no longer exist in the provider conversation.
+        const rolledBackAttemptIds = new Set(context.rolledBackAttemptIds);
+        const providerThreadTurns = context.providerTurns.filter(
+          (turn) =>
+            turn.providerThreadId === providerThread.id &&
+            (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
+        );
 
-      const snapshot =
-        runsToRollback.length === 0
-          ? { providerThread }
-          : yield* session.rollbackThread({
-              providerThread,
-              target: rollbackTarget,
-              providerThreadTurns,
-            });
+        snapshot =
+          runsToRollback.length === 0
+            ? { providerThread }
+            : yield* session.rollbackThread({
+                providerThread,
+                target: rollbackTarget,
+                providerThreadTurns,
+              });
+      }
       if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
       if (staleCheckpoints.length > 0) {
         yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
