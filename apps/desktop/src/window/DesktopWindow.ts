@@ -11,6 +11,7 @@ import * as Electron from "electron";
 import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
@@ -288,6 +289,7 @@ function bindFirstRevealTrigger(
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
+  const state = yield* DesktopState.DesktopState;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopState = yield* DesktopState.DesktopState;
   const assets = yield* DesktopAssets.DesktopAssets;
@@ -302,6 +304,10 @@ export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const backendReadyRef = yield* Ref.make(false);
+  // Windows close-to-tray must survive backend restarts without showing a window.
+  let windowRequested = true;
+  // The transient "Connecting to WSL" splash window, tracked separately so it
+  // is never mistaken for the real main window.
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
@@ -843,6 +849,7 @@ export const make = Effect.gen(function* () {
     }
 
     window.on("closed", () => {
+      if (environment.platform === "win32") windowRequested = false;
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
       void runPromise(electronWindow.clearMain(Option.some(window)));
@@ -887,7 +894,7 @@ export const make = Effect.gen(function* () {
   });
 
   const createMainIfBackendReady = Effect.gen(function* () {
-    if (yield* Ref.get(desktopState.quitting)) return;
+    if (!windowRequested || (yield* Ref.get(desktopState.quitting))) return;
     if (yield* waitingForBackend) return;
     const existingWindow = yield* currentMainWindow;
     if (Option.isSome(existingWindow)) return;
@@ -929,7 +936,15 @@ export const make = Effect.gen(function* () {
     yield* rendererHistory.register(splash.webContents, { surface: "splash" });
     yield* Ref.set(splashWindowRef, Option.some(splash));
     splash.once("closed", () => {
-      void runPromise(Ref.set(splashWindowRef, Option.none()));
+      void runPromise(
+        Effect.gen(function* () {
+          // Programmatic dismissal clears the reference before closing the splash.
+          if (Option.isSome(yield* Ref.get(splashWindowRef)) && environment.platform === "win32") {
+            windowRequested = false;
+          }
+          yield* Ref.set(splashWindowRef, Option.none());
+        }),
+      );
     });
     splash.once("ready-to-show", () => {
       if (!splash.isDestroyed()) {
@@ -983,6 +998,7 @@ export const make = Effect.gen(function* () {
     }),
     activate: Effect.gen(function* () {
       if (yield* Ref.get(desktopState.quitting)) return;
+      windowRequested = true;
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
         yield* electronWindow.reveal(existingWindow.value);
